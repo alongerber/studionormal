@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>חצינורמלי — סטודיו</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="mode-video">
+
+<!-- ═══ HEADER ═══ -->
+<div class="hdr">
+  <div class="hdr-left">
+    <h1>חצינורמלי</h1>
+    <div class="mode-switch">
+      <button class="mode-btn active" data-mode="video" onclick="switchMode('video')">🎬 סרטון</button>
+      <button class="mode-btn" data-mode="post" onclick="switchMode('post')">📝 פוסט</button>
+      <button class="mode-btn" data-mode="whatsapp" onclick="switchMode('whatsapp')">💬 ואטסאפ</button>
+      <button class="mode-btn" data-mode="reply" onclick="switchMode('reply')">💭 תגובה</button>
+      <button class="mode-btn" data-mode="breakout" onclick="switchMode('breakout')">🎲 פריצה</button>
+    </div>
+    <div class="nav">
+      <button class="nav-btn active" data-view="works" onclick="switchView('works')">ארכיון</button>
+      <button class="nav-btn" data-view="moments" onclick="switchView('moments')">🧠 רגעים</button>
+      <button class="nav-btn" data-view="create" onclick="switchView('create')">ייצור</button>
+      <button class="nav-btn" data-view="polish" onclick="switchView('polish')">ליטוש</button>
+      <button class="nav-btn" data-view="export" onclick="switchView('export')">ייצוא</button>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <button class="undo-btn" id="undoBtn" onclick="doUndo()" disabled title="בטל (Ctrl+Z)">↶</button>
+    <button class="undo-btn" id="redoBtn" onclick="doRedo()" disabled title="חזור (Ctrl+Y)">↷</button>
+    <select class="model-select" id="modelSelect" onchange="saveModel()">
+      <option value="claude-opus-4-7">Opus 4.7</option>
+      <option value="claude-opus-4-6">Opus 4.6</option>
+      <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+    </select>
+    <button class="icon-btn" onclick="openAnalytics()" title="ניתוח TikTok">📊</button>
+    <button class="icon-btn" onclick="openPerfList()" title="לוג ביצועים">📈</button>
+    <button class="icon-btn" onclick="openContext()" title="קבצי קונטקסט">📚</button>
+    <button class="icon-btn" onclick="openSettings()" title="הגדרות">⚙</button>
+    <div class="hdr-meta">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">הכנס Key</span>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- ═══ BREAKOUT VIEW — חומר גלם, בלי קנון, בלי כלוב ═══ -->
+<div class="view hidden" id="view-breakout">
+  <div class="view-wrap">
+    <div class="works-header">
+      <h2>🎲 מחולל פריצה</h2>
+      <div style="font-size:11px;color:var(--tx3)">קנון לא מוזרק. הדמות פתוחה. זורקים לקיר.</div>
+    </div>
+
+    <div class="sec" style="padding-top:14px">
+      <div class="desc">
+        המודל לא מקבל את הקנון, התזמון, או הנושאים הקיימים. הוא מקבל דמות מינימלית (גבר 41 גרוש)
+        ומחזיר רעיונות שלא היה חושב עליהם מעצמו.
+        כל רעיון → כפתור אחד → נכנס לבנק הרגעים.
+      </div>
+
+      <div style="margin-top:14px">
+        <div class="control-label">רמת חריפות</div>
+        <div class="heat-row" id="heatRow">
+          <button class="heat-btn on" data-heat="1" onclick="selectHeat(1, this)">
+            <span class="heat-emoji">🌶️</span>
+            <span class="heat-title">חריף</span>
+            <span class="heat-desc">רעיונות בעולם הדמות. פתיחה זהירה.</span>
+          </button>
+          <button class="heat-btn" data-heat="2" onclick="selectHeat(2, this)">
+            <span class="heat-emoji">🌶️🌶️</span>
+            <span class="heat-title">מופרע</span>
+            <span class="heat-desc">שובר חוקים לא כתובים. נכנס לנישות אסורות.</span>
+          </button>
+          <button class="heat-btn" data-heat="3" onclick="selectHeat(3, this)">
+            <span class="heat-emoji">🌶️🌶️🌶️</span>
+            <span class="heat-title">חסר בושה</span>
+            <span class="heat-desc">כל מה שעולה. 90% תזרוק, 10% זהב.</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="fld" style="margin-top:14px">
+        <div class="lbl">זרע (אופציונלי)</div>
+        <input id="breakoutSeed" class="inp" placeholder="למשל: שינוי, ביורוקרטיה, כאב, ריח — או משאיר ריק">
+      </div>
+
+      <div class="fld">
+        <div class="lbl">הטיה (אופציונלי)</div>
+        <div class="tags" id="breakoutTags"></div>
+      </div>
+
+      <button class="btn" onclick="genBreakoutIdeas()" style="background:var(--br)">🎲 ייצר 20 רעיונות</button>
+      <button class="btn2" onclick="genBreakoutIdeas(true)" style="margin-right:6px" title="עוד 20 בנוסף למה שיש">➕ עוד 20</button>
+    </div>
+
+    <div class="sec" id="breakoutResults" style="display:none">
+      <h2>רעיונות</h2>
+      <div class="desc">
+        לחץ "← רגע" כדי לשלוח לבנק הרגעים. לחץ "🔍 הרחב" כדי לקבל 2-3 משפטים של פיתוח.
+      </div>
+      <div id="breakoutIdeasList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MOMENTS VIEW ═══ -->
+<div class="view hidden" id="view-moments">
+  <div class="view-wrap">
+    <div class="works-header">
+      <h2>🧠 בנק רגעים</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="variety-row" style="padding:2px;margin:0" id="momentsFilter">
+          <button class="variety-btn on" data-f="all" onclick="filterMoments('all', this)">הכל</button>
+          <button class="variety-btn" data-f="unused" onclick="filterMoments('unused', this)">לא נוצלו</button>
+          <button class="variety-btn" data-f="used" onclick="filterMoments('used', this)">נוצלו</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec" style="padding-top:14px">
+      <div class="desc">רגע גולמי = משפט אחד שעלה לך בראש. פרט קטן, סיטואציה ויזואלית, רגע ספציפי. לא רעיון לפוסט — רגע בודד.</div>
+      <textarea id="momentText" class="ta" rows="2" placeholder="הילד הסתכל על הסופר פארם מהמרפסת ושאל למה אנחנו לא קונים שם."></textarea>
+      <div class="row" style="margin-top:8px">
+        <div style="flex:2">
+          <input id="momentCategory" class="inp" placeholder="קטגוריה (אופציונלי): הילד / עידן / עבודה...">
+        </div>
+        <div style="flex:1">
+          <button class="btn" style="width:100%" onclick="addMoment()">+ שמור רגע</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="momentsList" style="margin-top:14px"></div>
+    <div id="momentsEmpty" class="empty-works" style="display:none">
+      <h3>בנק ריק</h3>
+      <p>כל רגע קטן שעולה בראש — שים פה. מאוחר יותר הוא יהפוך לפוסט.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ WORKS LIST VIEW ═══ -->
+<div class="view" id="view-works">
+  <div class="view-wrap">
+    <div class="works-header">
+      <h2 id="worksTitle">ארכיון — סרטונים</h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="newWork()">+ חדש</button>
+        <button class="btn2" onclick="openPasteImport()">📋 הדבק קיים</button>
+      </div>
+    </div>
+    <div id="worksGrid" class="works-grid"></div>
+    <div id="worksEmpty" class="empty-works" style="display:none">
+      <h3>אין עבודות עדיין</h3>
+      <p>לחץ "חדש" כדי ליצור עבודה ראשונה, או "הדבק קיים" אם יש לך תסריט/פוסט שאתה רוצה ללטש.</p>
+      <button class="btn" onclick="newWork()">+ צור עבודה חדשה</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CREATE VIEW ═══ -->
+<div class="view hidden" id="view-create">
+  <div class="view-wrap">
+
+    <!-- REPLY MODE: external post brief -->
+    <div class="sec" id="replyBriefSection" style="display:none">
+      <h2>1. הפוסט החיצוני</h2>
+      <div class="desc">הדבק את הפוסט שאתה רוצה להגיב עליו + פרטי העמוד.</div>
+      <div class="row">
+        <div><div class="lbl">שם העמוד</div><input id="replyPageName" class="inp" placeholder="שם הדף / היוצר"></div>
+        <div><div class="lbl">קטגוריה</div>
+          <select id="replyCategory" class="inp" style="padding:8px 10px">
+            <option value="advisor">יועצים / מטפלים</option>
+            <option value="creator">סופרים / יוצרים</option>
+            <option value="brand">מותגים / חברות</option>
+            <option value="local">דפים מקומיים</option>
+            <option value="education">חינוך / הורות מוסדית</option>
+            <option value="food">אוכל / מתכונים</option>
+            <option value="dating">דייטינג / זוגיות</option>
+          </select>
+        </div>
+      </div>
+      <div class="fld">
+        <div class="lbl">תוכן הפוסט החיצוני</div>
+        <textarea id="replyPostText" class="ta" rows="6" placeholder="הדבק כאן את התוכן של הפוסט שאתה מגיב עליו..."></textarea>
+      </div>
+      <button class="btn" onclick="genReplies()">💭 ייצר 4 תגובות</button>
+      <div id="repliesOut"></div>
+      <div id="repliesToPol" style="display:none;margin-top:8px">
+        <button class="btn2" onclick="toPolish()">← העבר לליטוש</button>
+      </div>
+    </div>
+
+    <!-- BRIEF (video/post/whatsapp) -->
+    <div class="sec" id="briefSection">
+      <h2>1. בריף</h2>
+      <div class="desc" id="briefDesc">הנתונים זורמים לכל השלבים.</div>
+      <div class="fld">
+        <div class="lbl">נושא</div>
+        <textarea id="topic" class="ta" rows="3" placeholder="הילד נפל לו שן אצל אמא שלו..."></textarea>
+      </div>
+      <div class="row">
+        <div><div class="lbl" id="chrLbl">דמות נוספת</div><input id="chr" class="inp" placeholder="דני, בן הזוג"></div>
+        <div><div class="lbl">רגש</div><input id="emo" class="inp" placeholder="קנאה, החלפה"></div>
+      </div>
+
+      <!-- VIDEO-only: avoid reveal -->
+      <div class="fld" id="avoidField">
+        <div class="lbl">אסור לחשוף ב-Hook</div>
+        <textarea id="avoid" class="ta" rows="2" placeholder="ה-200 שקל, שוחד..."></textarea>
+      </div>
+
+      <button class="btn" onclick="genAngles()">🚀 4 זוויות</button>
+      <button class="btn2" onclick="genWildAngles()" style="margin-right:6px" title="זוויות מחוץ לקנון, בלי קונטקסט">🎲 מחוץ לקופסה</button>
+      <div id="anglesOut"></div>
+      <div id="anglesPicker" style="display:none;margin-top:10px"></div>
+      <div id="anglesSelected" style="display:none;margin-top:8px;padding:8px 11px;background:#0e1a14;border:1px solid var(--gr);border-radius:7px">
+        <div style="font-size:10px;color:var(--gr);margin-bottom:3px;font-weight:600">זווית נבחרה ✓</div>
+        <div id="anglesSelectedText" style="font-size:13px;line-height:1.7"></div>
+      </div>
+    </div>
+
+    <!-- VIDEO: Hooks -->
+    <div class="sec" id="hooksSection">
+      <h2>2. Hooks</h2>
+      <div class="desc">10 Hooks שלא חושפים פאנצ'ים.</div>
+      <div class="tags" id="hkTags"></div>
+      <button class="btn" onclick="genHooks()">🎣 10 Hooks</button>
+      <div id="hooksOut"></div>
+      <div id="hkSel" style="display:none;margin-top:10px">
+        <div class="lbl">ה-Hook שנבחר</div>
+        <textarea id="selHook" class="ta" rows="2" placeholder="הדבק את ה-Hook"></textarea>
+      </div>
+    </div>
+
+    <!-- POST: Pattern picker -->
+    <div class="sec" id="postPatternSection" style="display:none">
+      <h2>2. דפוס מבני</h2>
+      <div class="desc">בחר את המבנה לפוסט (ניתן לדלג).</div>
+      <div class="pattern-picker" id="patternPicker">
+        <div class="pattern-card" data-pattern="auto" onclick="selectPattern('auto', this)">
+          <strong>אוטומטי</strong>
+          תן ל-AI לבחור את הדפוס המתאים ביותר לנושא
+        </div>
+        <div class="pattern-card" data-pattern="anecdote" onclick="selectPattern('anecdote', this)">
+          <strong>דפוס 1: אנקדוטה מתרחבת</strong>
+          רגע ספציפי → פיתוח → פסקה מתרחבת → סגירה יבשה
+        </div>
+        <div class="pattern-card" data-pattern="observation" onclick="selectPattern('observation', this)">
+          <strong>דפוס 2: תצפית על אחרים</strong>
+          תיאור אחרים → ביקורת → היפוך "אני אותו דבר" → הודאה
+        </div>
+        <div class="pattern-card" data-pattern="dialog" onclick="selectPattern('dialog', this)">
+          <strong>דפוס 3: דיאלוג מרכזי</strong>
+          שיחה קצרה מחליפה את הפסקה המרכזית
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <div class="control-label">רמת דיאלוג</div>
+        <div class="dialog-level-row" id="dialogLevelRow">
+          <button class="dialog-level-btn on" data-level="medium" onclick="selectDialogLevel('medium', this)">בינוני</button>
+          <button class="dialog-level-btn" data-level="heavy" onclick="selectDialogLevel('heavy', this)">הרבה דיאלוג</button>
+          <button class="dialog-level-btn" data-level="light" onclick="selectDialogLevel('light', this)">מעט דיאלוג</button>
+          <button class="dialog-level-btn" data-level="none" onclick="selectDialogLevel('none', this)">בלי</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DRAFT -->
+    <div class="sec" id="draftSection">
+      <h2 id="draftTitle">3. תסריט</h2>
+      <div class="desc" id="draftHint">תסריט מלא עם תגיות ElevenLabs.</div>
+      <div class="tags" id="scTags"></div>
+      <button class="btn" onclick="genDraft()">📄 ייצר טיוטה</button>
+      <div id="draftOut"></div>
+      <div id="draftToPol" style="display:none;margin-top:8px">
+        <button class="btn2" onclick="toPolish()">← העבר לליטוש</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══ POLISH VIEW ═══ -->
+<div class="view hidden" id="view-polish" style="padding:0">
+  <div class="polish-view">
+
+    <!-- LIST -->
+    <div class="polish-list">
+      <div class="polish-list-header">
+        <div class="progress-row">
+          <div class="progress-title">התקדמות</div>
+          <div class="progress-count">
+            <span class="done" id="approvedCnt">0</span>
+            <span class="sep">/</span>
+            <span id="totalCnt">0</span>
+          </div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="list-tools">
+          <button class="btn2 bsm" onclick="scoreAll()" title="ציון YES BANK לכל השורות">⭐ דרג הכל</button>
+          <button class="btn2 bsm" onclick="detectCallbacks()" title="זהה סימטריות">🔗 callbacks</button>
+          <button class="btn2 bsm" onclick="runCanonCheck()" title="בדוק קנון">🔍 קנון</button>
+          <button class="btn2 bsm" onclick="showApprovedModal()">👁 מאושרות</button>
+          <button class="btn2 bsm" onclick="togglePasteEdit()">✎ ערוך טקסט</button>
+          <button class="btn2 bsm" onclick="resetApprovals()">↺ אפס</button>
+        </div>
+        <div class="bulk-bar" id="bulkBar">
+          <span class="bulk-count"><span id="selCnt">0</span> נבחרו</span>
+          <button class="btn bsm" onclick="approveSelected()">✓ אשר</button>
+          <button class="btn2 bsm" style="color:var(--ac)" onclick="deleteSelected()">🗑 מחק</button>
+          <button class="btn2 bsm" onclick="clearSelection()">× נקה</button>
+        </div>
+      </div>
+
+      <div class="polish-list-body">
+        <div id="pasteEdit" style="display:none">
+          <textarea id="pasteText" class="ta" rows="16" placeholder="הדבק טקסט מלא..."></textarea>
+          <button class="btn" style="margin-top:8px" onclick="savePasteEdit()">✓ סיום</button>
+          <button class="btn2" style="margin-top:8px" onclick="togglePasteEdit()">ביטול</button>
+        </div>
+        <div id="linesList"></div>
+        <div id="linesEmpty" class="empty-list" style="display:none">
+          <h3>אין טקסט</h3>
+          <p>חזור לייצור או הדבק טקסט ידנית</p>
+          <button class="btn" style="margin-top:14px" onclick="togglePasteEdit()">📝 הדבק טקסט</button>
+        </div>
+        <div id="allDone" class="all-done" style="display:none">
+          <div class="icon">🎉</div>
+          <h3>כל השורות מאושרות!</h3>
+          <p>לחץ "מאושרות" לראות את הכל, או עבור ל-ייצוא.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- WORKSHOP -->
+    <div class="workshop">
+      <div class="wk-empty" id="wkEmpty">
+        <div class="icon">✎</div>
+        <h3>בחר שורה מהרשימה</h3>
+        <p>לחץ על משפט מימין — הוא ייפתח כאן לליטוש</p>
+        <div class="shortcuts">
+          <strong>קיצורי מקלדת:</strong><br>
+          <kbd>J</kbd>/<kbd>K</kbd> שורה הבאה/קודמת<br>
+          <kbd>Enter</kbd> אשר שורה · <kbd>Space</kbd> דלג<br>
+          <kbd>G</kbd> ייצר חלופות · <kbd>F</kbd> תקן שורה<br>
+          <kbd>1</kbd>-<kbd>5</kbd> בחר חלופה<br>
+          <kbd>Ctrl+Z</kbd>/<kbd>Ctrl+Y</kbd> בטל/חזור
+        </div>
+      </div>
+
+      <div class="wk-content" id="wkContent" style="display:none">
+        <div class="wk-ctx" id="wkCtx"></div>
+
+        <div class="wk-work">
+          <div class="wk-work-label">
+            <span>המשפט הנוכחי</span>
+            <span class="n" id="wkLineNum"></span>
+          </div>
+          <textarea id="wkEditable" class="editable" rows="3"></textarea>
+          <div class="sel-tool" id="selTool">
+            <div class="sel-info" id="selInfo"></div>
+            <button onclick="replaceSelection()">🎲 החלף נבחר</button>
+          </div>
+          <div class="wk-quick">
+            <button class="btn" onclick="saveEditAndApprove()">✓ שמור & אשר</button>
+            <button class="btn2 fix-btn" onclick="fixCurrentLine()">🔧 תקן שורה</button>
+            <button class="btn2" onclick="approveAsIs()">אשר כמו שהיא</button>
+            <button class="btn2" onclick="skipCurrent()">⏭ דלג</button>
+            <button class="btn2" style="color:var(--ac)" onclick="deleteCurrent()">🗑</button>
+          </div>
+        </div>
+
+        <div class="wk-controls">
+          <div class="control-label">סוג חלופות</div>
+          <div class="variety-row" id="varietyRow">
+            <button class="variety-btn on" data-v="twin">כמעט זהה</button>
+            <button class="variety-btn" data-v="similar">דומה</button>
+            <button class="variety-btn" data-v="different">שונה לגמרי</button>
+          </div>
+
+          <div class="control-label">סגנון</div>
+          <div class="style-tags" id="styleTags"></div>
+
+          <div class="control-label">הנחיה חופשית</div>
+          <input type="text" id="freeText" class="free-text" placeholder="למשל: פחות 'ואני', יותר אבסורד...">
+
+          <button class="gen-btn" onclick="generateAlternatives()">🎲 ייצר 5 חלופות</button>
+        </div>
+
+        <div class="wk-alts">
+          <div class="alts-label">חלופות</div>
+          <div id="altsContainer">
+            <div class="alts-empty">לחץ "ייצר 5 חלופות" לקבל אפשרויות</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EXPORT VIEW ═══ -->
+<div class="view hidden" id="view-export">
+  <div class="view-wrap">
+    <h2 style="margin-bottom:12px">ייצוא</h2>
+    <div class="export-format" id="exportFormat"></div>
+    <div id="exportContent"><div class="desc">אין תסריט.</div></div>
+  </div>
+</div>
+
+</div>
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- Approved lines modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModals()"></div>
+<div class="modal" id="approvedModal">
+  <div class="modal-header">
+    <h3>שורות מאושרות</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body" id="approvedBody"></div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal" id="settingsModal">
+  <div class="modal-header">
+    <h3>הגדרות</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="settings-section">
+      <h3>API Key</h3>
+      <div class="settings-row">
+        <input type="password" id="settingsApiKey" class="inp" placeholder="sk-ant-..." style="flex:1">
+        <button class="btn" onclick="saveApiKey()">שמור</button>
+      </div>
+      <div style="font-size:11px;color:var(--tx3);margin-top:6px">
+        ה-Key נשמר רק במכשיר שלך ולא נשלח לשום מקום מלבד Anthropic.
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>גיבוי ושחזור</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn2" onclick="exportBackup()">💾 גיבוי הכל (JSON)</button>
+        <button class="btn2" onclick="document.getElementById('importFile').click()">📥 שחזור מ-JSON</button>
+        <input type="file" id="importFile" style="display:none" accept=".json" onchange="importBackup(event)">
+      </div>
+      <div style="font-size:11px;color:var(--tx3);margin-top:8px">
+        הגיבוי כולל את כל העבודות (סרטונים, פוסטים, ואטסאפ) אבל לא את ה-API key.
+      </div>
+    </div>
+
+    <div class="settings-section" style="border:1px solid var(--ac)">
+      <h3 style="color:var(--ac)">אזור מסוכן</h3>
+      <button class="btn" style="background:var(--ac)" onclick="confirmClearAll()">🗑 מחק את כל העבודות</button>
+    </div>
+  </div>
+</div>
+
+<!-- Paste Import modal -->
+<div class="modal large" id="pasteImportModal">
+  <div class="modal-header">
+    <h3>הדבק תוכן קיים לליטוש</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="desc">הדבק כאן פוסט, תסריט או שיחה. זה ייפתח כעבודה חדשה שאתה יכול ללטש שורה-שורה.</div>
+    <div style="margin-bottom:10px">
+      <span class="lbl">כותרת (אופציונלי):</span>
+      <input type="text" id="pasteTitle" class="inp" placeholder="למשל: פוסט על השכנה במקלט">
+    </div>
+    <textarea class="paste-area" id="pasteImportText" placeholder="הדבק את הטקסט כאן..."></textarea>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn2" onclick="closeModals()">ביטול</button>
+      <button class="btn" onclick="confirmPasteImport()">✓ ייבא לליטוש</button>
+    </div>
+  </div>
+</div>
+
+<!-- Analytics modal -->
+<div class="modal large" id="analyticsModal">
+  <div class="modal-header">
+    <h3>📊 ניתוח ביצועי TikTok</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="desc">
+      ייבא CSV של ביצועים מ-TikTok Analytics ותקבל ניתוח דפוסים של מה עבד ומה לא.
+      שדות נתמכים: כותרת, צפיות, אחוז סיום, לייקים, תגובות, שיתופים, תוכן (Hook + script).
+    </div>
+    <div class="analytics-upload" onclick="document.getElementById('analyticsCSV').click()">
+      <div style="font-size:32px;margin-bottom:8px">📁</div>
+      <div>לחץ לבחירת CSV</div>
+      <input type="file" id="analyticsCSV" accept=".csv" onchange="handleAnalyticsCSV(event)">
+    </div>
+    <div id="analyticsItems" class="analytics-items"></div>
+    <button class="btn" id="analyzeBtn" style="display:none;width:100%" onclick="runAnalysis()">🧠 נתח דפוסים</button>
+    <div id="analyticsInsight" class="analytics-insight" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Versions modal -->
+<div class="modal" id="versionsModal">
+  <div class="modal-header">
+    <h3>היסטוריית שמירות</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body" id="versionsBody"></div>
+</div>
+
+<!-- Context files modal -->
+<div class="modal large" id="contextModal">
+  <div class="modal-header">
+    <h3>📚 קבצי קונטקסט (קנון)</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="desc">
+      הקבצים האלה מוזרקים אוטומטית לכל בקשה ל-AI (יצירת פוסט, חלופות, תיקון, בדיקת קנון).
+      ככל שהם מעודכנים — המודל נשאר עקבי לעובדות שפורסמו.
+    </div>
+    <div class="analytics-upload" onclick="document.getElementById('contextFilesInput').click()">
+      <div style="font-size:32px;margin-bottom:8px">📁</div>
+      <div>לחץ לבחירת קבצי .md (מרובים)</div>
+      <div style="font-size:11px;color:var(--tx3);margin-top:4px">canon.md, timeline.md, topics_map.md, own_page_replies.md, ועוד</div>
+      <input type="file" id="contextFilesInput" accept=".md,.txt" multiple onchange="handleContextUpload(event)">
+    </div>
+    <div id="contextFilesList"></div>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn2" onclick="previewContextBlock()">👁 ראה איך זה נראה ב-prompt</button>
+      <button class="btn2" style="color:var(--ac)" onclick="clearAllContext()">🗑 מחק הכל</button>
+    </div>
+    <div id="contextPreview" style="display:none;margin-top:14px">
+      <div class="lbl">תצוגה מקדימה של בלוק הקונטקסט שיוזרק:</div>
+      <textarea id="contextPreviewText" class="ta" rows="12" readonly style="font-size:11px;font-family:monospace"></textarea>
+    </div>
+  </div>
+</div>
+
+<!-- Canon check results modal -->
+<div class="modal large" id="canonResultsModal">
+  <div class="modal-header">
+    <h3>🔍 תוצאות בדיקת קנון</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body" id="canonResultsBody"></div>
+</div>
+
+<!-- Moment-to-work modal -->
+<div class="modal" id="momentToWorkModal">
+  <div class="modal-header">
+    <h3>🧠 הפוך רגע לעבודה</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="desc" id="momentPreview"></div>
+    <div class="lbl" style="margin-top:14px">באיזה מצב?</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn2" onclick="convertMomentTo('video')">🎬 סרטון</button>
+      <button class="btn2" onclick="convertMomentTo('post')">📝 פוסט</button>
+      <button class="btn2" onclick="convertMomentTo('whatsapp')">💬 ואטסאפ</button>
+    </div>
+    <div id="momentConvertOut"></div>
+  </div>
+</div>
+
+<!-- Performance entry modal -->
+<div class="modal" id="perfModal">
+  <div class="modal-header">
+    <h3 id="perfModalTitle">📈 לוג ביצועים</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="row">
+      <div><div class="lbl">תאריך פרסום</div><input type="date" id="perfPublishedAt" class="inp"></div>
+      <div><div class="lbl">סוג חשיפה</div>
+        <select id="perfExposure" class="inp" style="padding:8px 10px">
+          <option value="organic">אורגני (רק בעמוד)</option>
+          <option value="seeded">זריעה (שיתוף בקבוצות)</option>
+          <option value="viral">ויראלי (אנשים אחרים שיתפו)</option>
+        </select>
+      </div>
+    </div>
+    <div class="fld" id="seededGroupsField" style="display:none">
+      <div class="lbl">קבוצות ששותף אליהן (שם + גודל, שורה לכל אחת)</div>
+      <textarea id="perfSeededGroups" class="ta" rows="3" placeholder="גרושים מדברים · 50K&#10;הורים בישראל · 200K"></textarea>
+    </div>
+    <div class="row">
+      <div><div class="lbl">צפיות</div><input type="number" id="perfViews" class="inp" placeholder="0"></div>
+      <div><div class="lbl">תגובות</div><input type="number" id="perfComments" class="inp" placeholder="0"></div>
+    </div>
+    <div class="row">
+      <div><div class="lbl">שיתופים</div><input type="number" id="perfShares" class="inp" placeholder="0"></div>
+      <div><div class="lbl">עוקבים חדשים</div><input type="number" id="perfNewFollowers" class="inp" placeholder="0"></div>
+    </div>
+    <div class="fld">
+      <div class="lbl">הערות</div>
+      <textarea id="perfNotes" class="ta" rows="3" placeholder="מה בלט? תגובה מיוחדת? משהו שקרה?"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn2" onclick="closeModals()">ביטול</button>
+      <button class="btn" onclick="savePerformanceEntry()">💾 שמור</button>
+    </div>
+  </div>
+</div>
+
+<!-- Performance list modal -->
+<div class="modal large" id="perfListModal">
+  <div class="modal-header">
+    <h3>📈 לוג ביצועים — כל הפוסטים</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn" onclick="analyzePerformance()">🧠 נתח דפוסים</button>
+      <button class="btn2" onclick="exportPerfCSV()">💾 ייצא CSV</button>
+    </div>
+    <div id="perfListBody"></div>
+    <div id="perfInsight" class="analytics-insight" style="display:none;margin-top:14px"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Scripts -->
+<script src="prompts.js"></script>
+<script src="storage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
