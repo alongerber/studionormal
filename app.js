@@ -16,7 +16,8 @@ const state = {
   activeIdx: -1,
   selectedLines: new Set(),
   styleMods: [],
-  varietyMode: 'twin',
+  varietyMode: 'similar',     // Default: similar (was 'twin' — almost-identical alts are rarely what users want first)
+  altCount: 5,                // Number of alternatives to request (1-8)
   selRange: null,
   styleTags: [],
   scriptTags: [],
@@ -29,6 +30,7 @@ const state = {
   currentMoment: null,
   currentPerfWorkId: null,
   autoCanonCheck: true,
+  useFeedbackLoop: true,      // Top performers from perf log get injected into creative prompts
   // Breakout state
   breakoutHeat: 1,
   breakoutTags: [],
@@ -190,11 +192,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   // load context files
   state.contextFiles = await HatziDB.getContextFiles();
 
+  // load feedback-loop preference (the top-performers injection toggle)
+  const flPref = await HatziDB.getSetting('useFeedbackLoop');
+  if (flPref !== null && flPref !== undefined) state.useFeedbackLoop = flPref;
+
   // build tag UI for all modes (we'll rebuild on mode switch)
   rebuildTagsForMode();
 
   // setup event listeners
   setupEventListeners();
+
+  // Initialize alt-count slider/label to match state.altCount default
+  if ($('altCountSlider')) {
+    $('altCountSlider').value = state.altCount;
+    setAltCount(state.altCount);
+  }
 
   // apply initial mode visibility (video)
   const cfg = MODE_CONFIG.video;
@@ -223,22 +235,97 @@ function setupEventListeners() {
     if (document.activeElement !== $('wkEditable')) $('selTool').classList.remove('show');
   }, 200));
 
+  // Bug #6/#18 — track unsaved edits in textarea.
+  // Previously: typing in textarea + clicking a different line silently lost the edit
+  // because openLine() overwrites textarea.value without warning.
+  // Now: any input marks dirty, beforeunload + line-switch warns.
+  $('wkEditable').addEventListener('input', markDirty);
+
+  // Bug #16 — persist freeText so it survives line navigation.
+  // Previously the user typed a free instruction, switched line, and it was wiped.
+  const ftEl = $('freeText');
+  if (ftEl) {
+    ftEl.addEventListener('input', () => {
+      state._freeTextValue = ftEl.value;
+    });
+  }
+
+  // Warn before unload if there are unsaved edits in the textarea.
+  window.addEventListener('beforeunload', (e) => {
+    if (state._dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
   // keyboard shortcuts
   document.addEventListener('keydown', handleKeyboard);
 }
 
+// Update the alt-count slider label and the generate button's text.
+function setAltCount(n) {
+  const num = Math.max(1, Math.min(8, parseInt(n, 10) || 5));
+  state.altCount = num;
+  const lbl = $('altCountLabel');
+  if (lbl) lbl.textContent = num;
+  const btn = $('genAltsBtn');
+  if (btn) btn.textContent = `🎲 ייצר ${num} חלופות`;
+}
+
+// ─── Dirty-state machinery for the textarea (Bug #6/#18) ───────────────
+function markDirty() {
+  state._dirty = true;
+  const lbl = $('wkLineNum');
+  if (lbl && !lbl.dataset.dirty) {
+    lbl.dataset.dirty = '1';
+    lbl.textContent = lbl.textContent + ' •';
+  }
+}
+function clearDirty() {
+  state._dirty = false;
+  const lbl = $('wkLineNum');
+  if (lbl) {
+    delete lbl.dataset.dirty;
+    // strip trailing ' •' if present
+    lbl.textContent = lbl.textContent.replace(/\s*•$/, '');
+  }
+}
+function confirmAbandonDirty() {
+  if (!state._dirty) return true;
+  return confirm('יש שינויים לא שמורים בטקסט. לעבור בלי לשמור?');
+}
+
+// ─── Canon-check invalidation (Bug #8) ─────────────────────────────────
+// When any line text changes, the saved canon-check result becomes stale.
+// Don't keep showing yesterday's verdict on today's text.
+function invalidateCanonCheck() {
+  if (state.currentWork && state.currentWork.canonCheck) {
+    delete state.currentWork.canonCheck;
+  }
+}
+
 function handleKeyboard(e) {
+  // Bug #7 — don't intercept Ctrl+Z/Y when the user is typing in an input/textarea.
+  // The native browser undo for textarea characters is more useful than our work-snapshot undo
+  // when the user is mid-typing. Our undo is still available via the toolbar buttons.
+  const inEditable = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+
   // Ctrl/Cmd shortcuts
   if ((e.ctrlKey || e.metaKey)) {
-    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); return; }
-    if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); return; }
+    if (e.key === 'z' && !e.shiftKey) {
+      if (inEditable) return;  // let browser handle native undo
+      e.preventDefault(); doUndo(); return;
+    }
+    if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+      if (inEditable) return;  // let browser handle native redo
+      e.preventDefault(); doRedo(); return;
+    }
     if (e.key === 's') { e.preventDefault(); toast('נשמר אוטומטית'); return; }
     return;
   }
 
   // Don't intercept if typing in an input
-  const tag = e.target.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (inEditable) return;
 
   // Only active in polish view with an active line
   if (state.view !== 'polish') return;
@@ -254,7 +341,7 @@ function handleKeyboard(e) {
   else if (e.key === ' ') { e.preventDefault(); skipCurrent(); }
   else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); generateAlternatives(); }
   else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fixCurrentLine(); }
-  else if (e.key >= '1' && e.key <= '5') {
+  else if (e.key >= '1' && e.key <= '8') {
     e.preventDefault();
     const n = parseInt(e.key);
     const cards = $$('#altsContainer .alt-card');
@@ -382,6 +469,7 @@ function switchView(view) {
   if (view === 'export') renderExport();
   if (view === 'polish') renderLines();
   if (view === 'breakout') renderBreakoutIdeas();
+  if (view === 'perf') renderPerfBulkView();
 }
 
 function rebuildTagsForMode() {
@@ -516,18 +604,42 @@ async function saveApiKey() {
 // ═══════════════════════════════════════════════════════════════════
 // API CALLS
 // ═══════════════════════════════════════════════════════════════════
-async function callAPI(messages, maxTokens = 2500, taskType = null) {
+// Track in-flight requests so we can cancel them when a new one starts.
+// Keyed by taskType — pressing G twice will abort the first alternatives call.
+const _inflight = {};
+
+function _abortInflight(taskType) {
+  if (taskType && _inflight[taskType]) {
+    try { _inflight[taskType].abort(); } catch (_) {}
+    delete _inflight[taskType];
+  }
+}
+
+function abortAllRequests() {
+  Object.keys(_inflight).forEach(_abortInflight);
+}
+
+async function callAPI(messages, maxTokens = 2500, taskType = null, modeOverride = null) {
   if (!state.apiKey) {
     toast('הכנס API key בהגדרות', 'error');
     openSettings();
     return null;
   }
 
+  // Cancel any previous request of the same task type — prevents duplicate-cost races.
+  _abortInflight(taskType);
+  const ac = new AbortController();
+  if (taskType) _inflight[taskType] = ac;
+
   $('statusDot').style.background = 'var(--ac)';
   $('statusText').textContent = 'עובד...';
 
   try {
-    let sysPrompt = MODE_CONFIG[state.mode].systemPrompt;
+    // Use modeOverride if explicitly provided — this prevents a race condition where
+    // convertToMode/convertMomentTo were temporarily mutating state.mode during the await,
+    // causing parallel API calls to receive the wrong system prompt.
+    const effectiveMode = modeOverride || state.mode;
+    let sysPrompt = MODE_CONFIG[effectiveMode].systemPrompt;
 
     // BREAKOUT TASKS: force no-context mode even if files are loaded.
     // The whole point of breakout is to escape the canon cage.
@@ -547,9 +659,33 @@ async function callAPI(messages, maxTokens = 2500, taskType = null) {
           sysPrompt = sysPrompt + '\n\n' + contextBlock;
         }
       }
+
+      // Feedback loop — inject top performers bank for creative generation tasks.
+      // The model sees concrete examples of what worked from the user's own past content
+      // and treats them as YES BANK (canonical good examples) rather than generic advice.
+      const creativeTasks = ['draft', 'alternatives', 'hooks', 'angles', 'reply'];
+      if (creativeTasks.includes(taskType) && typeof getFeedbackBlock === 'function') {
+        try {
+          const feedbackBlock = await getFeedbackBlock();
+          if (feedbackBlock) {
+            sysPrompt = sysPrompt + '\n\n' + feedbackBlock;
+          }
+        } catch (e) {
+          // Don't fail the API call if feedback lookup breaks — log and continue.
+          console.warn('feedback block error:', e);
+        }
+      }
     }
 
     const selectedModel = taskType ? resolveModel(taskType) : state.model;
+
+    // Prompt caching — wrap system as content array with cache_control.
+    // The system prompt + canon block is repeated identically across many calls;
+    // caching cuts cost ~90% on those tokens after the first call (5-min TTL).
+    // If sysPrompt is under the cache threshold (~1024 tokens), the API ignores cache_control silently.
+    const systemPayload = [
+      { type: 'text', text: sysPrompt, cache_control: { type: 'ephemeral' } }
+    ];
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -562,9 +698,10 @@ async function callAPI(messages, maxTokens = 2500, taskType = null) {
       body: JSON.stringify({
         model: selectedModel,
         max_tokens: maxTokens,
-        system: sysPrompt,
+        system: systemPayload,
         messages: messages
-      })
+      }),
+      signal: ac.signal
     });
 
     const d = await r.json();
@@ -575,6 +712,17 @@ async function callAPI(messages, maxTokens = 2500, taskType = null) {
       return null;
     }
 
+    // Track cache savings — cache_read_input_tokens are billed at 10% of normal input tokens
+    if (d.usage) {
+      const cacheRead = d.usage.cache_read_input_tokens || 0;
+      const cacheWrite = d.usage.cache_creation_input_tokens || 0;
+      if (cacheRead > 0 || cacheWrite > 0) {
+        state._cacheStats = state._cacheStats || { read: 0, write: 0 };
+        state._cacheStats.read += cacheRead;
+        state._cacheStats.write += cacheWrite;
+      }
+    }
+
     const text = d.content?.[0]?.text;
     if (!text) {
       toast('תשובה ריקה מהמודל', 'error');
@@ -583,9 +731,14 @@ async function callAPI(messages, maxTokens = 2500, taskType = null) {
 
     return text;
   } catch (e) {
+    // AbortError is expected when we cancel — don't show as error to the user.
+    if (e.name === 'AbortError') return null;
     toast('שגיאה: ' + e.message, 'error');
     return null;
   } finally {
+    // Only clear if this is still the current in-flight for this task
+    // (a newer request may have replaced us).
+    if (taskType && _inflight[taskType] === ac) delete _inflight[taskType];
     updateStatus();
   }
 }
@@ -1054,6 +1207,10 @@ function renderLines() {
 function openLine(idx) {
   if (!state.currentWork || !state.currentWork.lines[idx]) return;
 
+  // Bug #6/#18 — warn before discarding unsaved textarea content.
+  // Returning false here prevents navigation and keeps the user in the dirty line.
+  if (state.activeIdx !== idx && !confirmAbandonDirty()) return;
+
   state.activeIdx = idx;
   const line = state.currentWork.lines[idx];
 
@@ -1074,11 +1231,19 @@ function openLine(idx) {
 
   // editable
   $('wkEditable').value = line.text;
+  clearDirty();   // fresh line — no unsaved changes yet
+
   $('selTool').classList.remove('show');
   state.selRange = null;
 
+  // Bug #16 — restore persisted freeText so it survives line navigation
+  const ftEl = $('freeText');
+  if (ftEl && state._freeTextValue != null) {
+    ftEl.value = state._freeTextValue;
+  }
+
   // clear alts
-  $('altsContainer').innerHTML = '<div class="alts-empty">לחץ "ייצר 5 חלופות" או <kbd>G</kbd></div>';
+  $('altsContainer').innerHTML = '<div class="alts-empty">לחץ "ייצר חלופות" או <kbd>G</kbd></div>';
 
   // update active state in list
   renderLines();
@@ -1150,6 +1315,7 @@ async function deleteSelected() {
   sorted.forEach(i => state.currentWork.lines.splice(i, 1));
   state.selectedLines.clear();
   state.activeIdx = -1;
+  invalidateCanonCheck();   // Bug #8 — text removed, old check is stale
   $('wkEmpty').style.display = '';
   $('wkContent').style.display = 'none';
   await saveCurrentWork('bulk_delete');
@@ -1182,6 +1348,9 @@ async function saveEditAndApprove() {
   state.currentWork.lines[state.activeIdx].approved = true;
   // invalidate score (edited)
   delete state.currentWork.lines[state.activeIdx].score;
+  // Bug #8 — invalidate canon check because the text changed
+  invalidateCanonCheck();
+  clearDirty();
   await saveCurrentWork('line_approved');
   autoAdvance();
 }
@@ -1197,6 +1366,8 @@ async function deleteCurrent() {
   snapshotForUndo();
   state.currentWork.lines.splice(state.activeIdx, 1);
   state.activeIdx = -1;
+  invalidateCanonCheck();   // Bug #8 — text removed, old check is stale
+  clearDirty();              // line is gone, dirty state has no meaning
   $('wkEmpty').style.display = '';
   $('wkContent').style.display = 'none';
   await saveCurrentWork('line_deleted');
@@ -1225,7 +1396,8 @@ function autoAdvance() {
 async function generateAlternatives(forSelectionOnly = false) {
   if (state.activeIdx < 0) return;
 
-  const ctx = buildContext(state.activeIdx);
+  // Note: previously had `const ctx = buildContext(...)` here but it was never used —
+  // the alternatives prompt only consumes the target line + fullScript. Removed dead code.
   const fullScript = state.currentWork.lines.map((l, i) => `${i+1}. ${l.text}${l.approved ? ' ✓' : ''}`).join('\n');
   
   let targetText = $('wkEditable').value;
@@ -1239,14 +1411,26 @@ async function generateAlternatives(forSelectionOnly = false) {
     state.styleMods.join(', '),
     v('freeText'),
     state.mode,
-    fullScript
+    fullScript,
+    state.activeIdx,        // tell prompt which line to mark in fullScript
+    state.altCount || 5     // how many alternatives to request
   );
 
   $('altsContainer').innerHTML = '<div class="loading">מייצר חלופות...</div>';
   const result = await callAPI([{ role: 'user', content: prompt }], 2000, 'alternatives');
   if (!result) { $('altsContainer').innerHTML = '<div class="alts-empty">שגיאה</div>'; return; }
 
-  const alts = result.split('\n').filter(l => /^\d+[\.\)]/.test(l.trim())).map(l => l.replace(/^\d+[\.\)]\s*/, '').trim()).filter(l => l);
+  let alts = result.split('\n').filter(l => /^\d+[\.\)]/.test(l.trim())).map(l => l.replace(/^\d+[\.\)]\s*/, '').trim()).filter(l => l);
+
+  // Dedup near-identical alternatives — sometimes the model returns 2 paraphrases of the same idea.
+  // Simple approach: dedup by case-folded normalized prefix (first 20 chars after whitespace collapse).
+  const seen = new Set();
+  alts = alts.filter(a => {
+    const key = a.replace(/\s+/g, ' ').trim().substring(0, 20).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   if (alts.length === 0) {
     $('altsContainer').innerHTML = '<div class="alts-empty">לא נמצאו חלופות תקינות</div>';
@@ -1279,16 +1463,18 @@ function applyAlternative(idx, forSelectionOnly) {
     ta.value = alts[idx];
   }
   ta.focus();
+  markDirty();   // alt was inserted but not saved yet — flag it
   toast('הוחלף — אל תשכח לשמור', 'success');
 }
 
 async function fixCurrentLine() {
   if (state.activeIdx < 0) return;
   const ctx = buildContext(state.activeIdx);
-  const fullScript = state.currentWork.lines.map((l, i) => `${i+1}. ${l.text}${l.approved ? ' ✓' : ''}`).join('\n');
   const currentText = $('wkEditable').value;
 
-  const prompt = PROMPTS.fixLine(ctx, currentText, state.mode, fullScript);
+  // fullScript intentionally not passed — fix is local, ctx is enough.
+  // Saves tokens AND focuses the model on the line itself.
+  const prompt = PROMPTS.fixLine(ctx, currentText, state.mode);
   $('altsContainer').innerHTML = '<div class="loading">מתקן...</div>';
 
   const result = await callAPI([{ role: 'user', content: prompt }], 800, 'fix');
@@ -1297,6 +1483,7 @@ async function fixCurrentLine() {
   const cleaned = result.trim().replace(/^["'"'«]+|["'"'»]+$/g, '');
 
   $('wkEditable').value = cleaned;
+  markDirty();   // user-visible reminder that the textarea changed
   $('altsContainer').innerHTML = `<div class="alts-empty" style="color:var(--gr);border-color:var(--gr)">✓ גרסה משופרת הוחלה. לחץ "שמור & אשר" אם נראית לך.</div>`;
   toast('שורה תוקנה', 'success');
 }
@@ -1307,8 +1494,8 @@ async function fixLineQuick(idx, btn) {
   btn.textContent = '⌛';
 
   const ctx = buildContext(idx);
-  const fullScript = state.currentWork.lines.map((l, i) => `${i+1}. ${l.text}${l.approved ? ' ✓' : ''}`).join('\n');
-  const prompt = PROMPTS.fixLine(ctx, state.currentWork.lines[idx].text, state.mode, fullScript);
+  // fullScript intentionally not passed (see fixCurrentLine).
+  const prompt = PROMPTS.fixLine(ctx, state.currentWork.lines[idx].text, state.mode);
 
   const result = await callAPI([{ role: 'user', content: prompt }], 800, 'fix');
   btn.classList.remove('loading');
@@ -1320,6 +1507,8 @@ async function fixLineQuick(idx, btn) {
   snapshotForUndo();
   state.currentWork.lines[idx].text = cleaned;
   delete state.currentWork.lines[idx].score;
+  // Invalidate canon check because the text changed (Bug #8).
+  invalidateCanonCheck();
   await saveCurrentWork('line_fixed');
   renderLines();
   toast('תוקן', 'success');
@@ -1327,9 +1516,26 @@ async function fixLineQuick(idx, btn) {
 
 function buildContext(idx) {
   const lines = state.currentWork.lines;
-  const before = lines.slice(Math.max(0, idx - 3), idx).map(l => l.text).join('\n');
-  const after = lines.slice(idx + 1, idx + 4).map(l => l.text).join('\n');
-  return `לפני:\n${before}\n---\nאחרי:\n${after}`;
+  const isContent = t => t && !TAG_ONLY_RE.test(t);
+
+  // Mode-aware context size:
+  // - post: 1 paragraph each side (paragraphs are already 50-250 words; more = bloat)
+  // - whatsapp: 5 lines each side (each line is a tiny chat message; need more to see flow)
+  // - video/reply/etc: 3 lines each side (sentence-level units)
+  const ctxSize = state.mode === 'post' ? 1 : state.mode === 'whatsapp' ? 5 : 3;
+
+  // Walk back/forward collecting up to ctxSize CONTENT lines (skip tag-only like [exhales]).
+  // Old version included [exhales]/[sighs] etc. as context, polluting the prompt.
+  const beforeArr = [];
+  for (let i = idx - 1; i >= 0 && beforeArr.length < ctxSize; i--) {
+    if (isContent(lines[i].text)) beforeArr.unshift(lines[i].text);
+  }
+  const afterArr = [];
+  for (let i = idx + 1; i < lines.length && afterArr.length < ctxSize; i++) {
+    if (isContent(lines[i].text)) afterArr.push(lines[i].text);
+  }
+
+  return `לפני:\n${beforeArr.join('\n')}\n---\nאחרי:\n${afterArr.join('\n')}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2106,11 +2312,8 @@ async function convertMomentTo(targetMode) {
   $('momentConvertOut').innerHTML = '<div class="loading">ממיר לבריף...</div>';
   
   const prompt = PROMPTS.momentToBrief(m.text, targetMode);
-  // Temporarily use target mode for system prompt
-  const origMode = state.mode;
-  state.mode = targetMode;
-  const result = await callAPI([{ role: 'user', content: prompt }], 1000, 'momentToBrief');
-  state.mode = origMode;
+  // Pass targetMode as modeOverride — no more state.mode mutation race condition.
+  const result = await callAPI([{ role: 'user', content: prompt }], 1000, 'momentToBrief', targetMode);
   
   if (!result) {
     $('momentConvertOut').innerHTML = '<div style="color:var(--ac)">שגיאה</div>';
@@ -2204,11 +2407,8 @@ async function convertToMode(targetMode) {
   toast('ממיר למדיום אחר...');
   const prompt = PROMPTS.crossMode(state.mode, targetMode, sourceText);
   
-  // Temporarily use target mode for system prompt
-  const origMode = state.mode;
-  state.mode = targetMode;
-  const result = await callAPI([{ role: 'user', content: prompt }], 4000, 'crossMode');
-  state.mode = origMode;
+  // Pass targetMode as modeOverride — no more state.mode mutation race condition.
+  const result = await callAPI([{ role: 'user', content: prompt }], 4000, 'crossMode', targetMode);
   
   if (!result) return;
   
@@ -2243,6 +2443,7 @@ async function openPerfEntry(workId) {
   $('perfExposure').value = existing?.exposureType || 'organic';
   $('perfSeededGroups').value = (existing?.seededGroups || []).map(g => `${g.name} · ${g.size}`).join('\n');
   $('perfViews').value = existing?.views || '';
+  if ($('perfLikes')) $('perfLikes').value = existing?.likes || '';
   $('perfComments').value = existing?.comments || '';
   $('perfShares').value = existing?.shares || '';
   $('perfNewFollowers').value = existing?.newFollowers || '';
@@ -2274,6 +2475,7 @@ async function savePerformanceEntry() {
     exposureType: v('perfExposure'),
     seededGroups,
     views: parseInt(v('perfViews')) || 0,
+    likes: parseInt(v('perfLikes')) || 0,
     comments: parseInt(v('perfComments')) || 0,
     shares: parseInt(v('perfShares')) || 0,
     newFollowers: parseInt(v('perfNewFollowers')) || 0,
@@ -2283,7 +2485,13 @@ async function savePerformanceEntry() {
   await HatziDB.savePerformance(perf);
   closeModals();
   toast('נשמר', 'success');
-  refreshWorksList();
+  // Bug fix: previously called refreshWorksList here, but the user is in the perf flow,
+  // not the works flow. Refresh perf list instead so user sees their entry immediately.
+  if ($('view-perf') && !$('view-perf').classList.contains('hidden')) {
+    renderPerfBulkView();
+  } else {
+    refreshWorksList();
+  }
 }
 
 async function openPerfList() {
@@ -2334,7 +2542,7 @@ async function analyzePerformance() {
     items.push({
       title: work.title || '',
       views: p.views,
-      likes: 0,
+      likes: p.likes || 0,        // Bug fix: was hardcoded to 0, ignoring real data
       comments: p.comments,
       shares: p.shares,
       completion: '',
@@ -2359,7 +2567,7 @@ async function exportPerfCSV() {
   const perfs = await HatziDB.listAllPerformance();
   if (perfs.length === 0) { toast('אין נתונים', 'error'); return; }
   
-  const headers = ['title', 'mode', 'publishedAt', 'exposureType', 'views', 'comments', 'shares', 'newFollowers', 'notes'];
+  const headers = ['title', 'mode', 'publishedAt', 'exposureType', 'views', 'likes', 'comments', 'shares', 'newFollowers', 'notes'];
   const rows = [headers.join(',')];
   for (const p of perfs) {
     const work = await HatziDB.getWork(p.workId);
@@ -2370,6 +2578,7 @@ async function exportPerfCSV() {
       new Date(p.publishedAt).toISOString().split('T')[0],
       p.exposureType,
       p.views,
+      p.likes || 0,
       p.comments,
       p.shares,
       p.newFollowers,
@@ -2385,6 +2594,367 @@ async function exportPerfCSV() {
   a.click();
   URL.revokeObjectURL(url);
   toast('CSV הורד', 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PERFORMANCE V2 — bulk entry, paste import, feedback loop
+// ═══════════════════════════════════════════════════════════════════
+
+// Open the new performance view (replaces the modal-only flow).
+async function openPerfBulkView() {
+  switchView('perf');
+  await renderPerfBulkView();
+}
+
+// Render the bulk entry table — works without perf data, ready to fill inline.
+async function renderPerfBulkView() {
+  // Get all works across all modes
+  const allModes = ['video', 'post', 'whatsapp', 'reply'];
+  const allWorks = [];
+  for (const mode of allModes) {
+    const ws = await HatziDB.listWorks(mode);
+    allWorks.push(...ws);
+  }
+
+  const allPerfs = await HatziDB.listAllPerformance();
+  const perfMap = new Map(allPerfs.map(p => [p.workId, p]));
+
+  // Show only works that have approved content (drafts not ready yet aren't worth tracking)
+  const eligible = allWorks.filter(w => 
+    w.lines && w.lines.some(l => l.approved)
+  );
+
+  // Split: pending (no perf yet) vs logged (have perf)
+  const pending = eligible.filter(w => !perfMap.has(w.id));
+  const logged = eligible.filter(w => perfMap.has(w.id));
+
+  // Sort pending by createdAt desc — newest first (most likely to track)
+  pending.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  // Sort logged by publishedAt desc
+  logged.sort((a, b) => {
+    const pa = perfMap.get(a.id);
+    const pb = perfMap.get(b.id);
+    return (pb.publishedAt || 0) - (pa.publishedAt || 0);
+  });
+
+  // Render pending table (the bulk entry one)
+  const pendingEl = $('perfPendingTable');
+  if (pending.length === 0) {
+    pendingEl.innerHTML = '<div class="desc" style="text-align:center;padding:20px">אין סרטונים לרשום. תחזור אחרי שתפרסם משהו.</div>';
+    $('perfBulkSaveBar').style.display = 'none';
+  } else {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const headerRow = `
+      <div class="pb-row pb-header">
+        <div class="pb-title">כותרת</div>
+        <div class="pb-mode">סוג</div>
+        <div class="pb-date">תאריך</div>
+        <div class="pb-num">צפיות</div>
+        <div class="pb-num">לייקים</div>
+        <div class="pb-num">תגובות</div>
+        <div class="pb-num">שיתופים</div>
+        <div class="pb-num">עוקבים+</div>
+        <div class="pb-action"></div>
+      </div>`;
+    const rows = pending.map(w => {
+      const modeLabel = { video: '🎬', post: '📝', whatsapp: '💬', reply: '💭' }[w.mode] || w.mode;
+      // Each row: title (read-only), mode, date input, then 5 number inputs
+      return `
+        <div class="pb-row" data-wid="${esc(w.id)}">
+          <div class="pb-title" title="${esc(w.title || '')}">${esc((w.title || '(ללא שם)').substring(0, 40))}</div>
+          <div class="pb-mode">${modeLabel}</div>
+          <div class="pb-date"><input type="date" class="pb-inp" data-f="publishedAt" value="${todayStr}"></div>
+          <div class="pb-num"><input type="number" class="pb-inp" data-f="views" placeholder="0" min="0"></div>
+          <div class="pb-num"><input type="number" class="pb-inp" data-f="likes" placeholder="0" min="0"></div>
+          <div class="pb-num"><input type="number" class="pb-inp" data-f="comments" placeholder="0" min="0"></div>
+          <div class="pb-num"><input type="number" class="pb-inp" data-f="shares" placeholder="0" min="0"></div>
+          <div class="pb-num"><input type="number" class="pb-inp" data-f="newFollowers" placeholder="0" min="0"></div>
+          <div class="pb-action"><button class="btn2 bsm" onclick="openPerfEntry('${esc(w.id)}')" title="טופס מלא">⚙</button></div>
+        </div>`;
+    }).join('');
+    pendingEl.innerHTML = headerRow + rows;
+    $('perfBulkSaveBar').style.display = '';
+    updateBulkUnsavedCount();
+  }
+
+  // Wire up input listeners to track filled rows
+  pendingEl.querySelectorAll('.pb-inp').forEach(inp => {
+    inp.addEventListener('input', updateBulkUnsavedCount);
+  });
+
+  // Render logged table
+  const loggedEl = $('perfLoggedTable');
+  if (logged.length === 0) {
+    loggedEl.innerHTML = '<div class="desc">אין רשומות עדיין</div>';
+  } else {
+    const rows = logged.map(w => {
+      const p = perfMap.get(w.id);
+      const date = new Date(p.publishedAt).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' });
+      const eng = p.views > 0 ? Math.round((((p.likes||0) + p.comments + p.shares) / p.views) * 1000) / 10 : 0;
+      return `
+        <div class="pl-row">
+          <div class="pl-date">${date}</div>
+          <div class="pl-title" title="${esc(w.title || '')}">${esc((w.title || '').substring(0, 35))}</div>
+          <div class="pl-stat"><strong>${(p.views||0).toLocaleString()}</strong></div>
+          <div class="pl-stat">❤ ${(p.likes||0).toLocaleString()}</div>
+          <div class="pl-stat">💬 ${(p.comments||0).toLocaleString()}</div>
+          <div class="pl-stat">↗ ${(p.shares||0).toLocaleString()}</div>
+          <div class="pl-stat" title="engagement rate">${eng}%</div>
+          <button class="btn2 bsm" onclick="openPerfEntry('${esc(w.id)}')">✎</button>
+        </div>`;
+    }).join('');
+    loggedEl.innerHTML = rows;
+  }
+
+  // Render insights if we have a saved analysis
+  await renderSavedInsights();
+}
+
+function updateBulkUnsavedCount() {
+  const rows = document.querySelectorAll('#perfPendingTable .pb-row[data-wid]');
+  let filled = 0;
+  rows.forEach(row => {
+    const views = row.querySelector('input[data-f="views"]')?.value;
+    if (views && parseInt(views) > 0) filled++;
+  });
+  const lbl = $('perfBulkUnsaved');
+  if (lbl) lbl.textContent = filled === 0 ? 'אין שורות חדשות' : `${filled} שורות חדשות לשמירה`;
+}
+
+// Save all rows in the bulk table that have at least views filled.
+async function savePerfBulk() {
+  const rows = document.querySelectorAll('#perfPendingTable .pb-row[data-wid]');
+  let saved = 0;
+  for (const row of rows) {
+    const wid = row.dataset.wid;
+    const views = parseInt(row.querySelector('input[data-f="views"]')?.value) || 0;
+    if (views <= 0) continue;  // skip empty rows
+    
+    const perf = {
+      workId: wid,
+      publishedAt: new Date(row.querySelector('input[data-f="publishedAt"]')?.value || Date.now()).getTime(),
+      exposureType: 'organic',  // default for bulk; user can edit later via ⚙
+      seededGroups: [],
+      views,
+      likes: parseInt(row.querySelector('input[data-f="likes"]')?.value) || 0,
+      comments: parseInt(row.querySelector('input[data-f="comments"]')?.value) || 0,
+      shares: parseInt(row.querySelector('input[data-f="shares"]')?.value) || 0,
+      newFollowers: parseInt(row.querySelector('input[data-f="newFollowers"]')?.value) || 0,
+      notes: ''
+    };
+    await HatziDB.savePerformance(perf);
+    saved++;
+  }
+  if (saved === 0) {
+    toast('אין שורות עם צפיות למלא', 'error');
+    return;
+  }
+  toast(`${saved} סרטונים נשמרו`, 'success');
+  await renderPerfBulkView();
+}
+
+// Paste-import: parse tab/comma-separated text, match by title to existing works.
+function openPasteImportPerf() {
+  $('perfPasteText').value = '';
+  openModal('perfPasteModal');
+}
+
+async function confirmPasteImportPerf() {
+  const text = $('perfPasteText').value.trim();
+  if (!text) { toast('אין טקסט', 'error'); return; }
+
+  // Get all works for matching
+  const allModes = ['video', 'post', 'whatsapp', 'reply'];
+  const allWorks = [];
+  for (const mode of allModes) {
+    const ws = await HatziDB.listWorks(mode);
+    allWorks.push(...ws);
+  }
+
+  // Parse lines: title \t views \t likes \t comments \t shares
+  // Also accept commas as separator. Skip header rows.
+  const lines = text.split('\n').filter(l => l.trim());
+  const matched = [];
+  const unmatched = [];
+
+  for (const line of lines) {
+    const parts = line.split(/\t|,/).map(p => p.trim());
+    if (parts.length < 2) continue;
+    const title = parts[0];
+    // Skip likely header
+    if (/^(title|כותרת|name|שם)/i.test(title)) continue;
+
+    // Find best matching work by title (case-insensitive substring match)
+    const titleLow = title.toLowerCase();
+    const work = allWorks.find(w => 
+      (w.title || '').toLowerCase().includes(titleLow) || 
+      titleLow.includes((w.title || '').toLowerCase().substring(0, 15))
+    );
+
+    if (!work) { unmatched.push(title); continue; }
+
+    matched.push({
+      workId: work.id,
+      publishedAt: Date.now(),
+      exposureType: 'organic',
+      seededGroups: [],
+      views: parseInt(parts[1]) || 0,
+      likes: parseInt(parts[2]) || 0,
+      comments: parseInt(parts[3]) || 0,
+      shares: parseInt(parts[4]) || 0,
+      newFollowers: parseInt(parts[5]) || 0,
+      notes: ''
+    });
+  }
+
+  if (matched.length === 0) {
+    toast('לא נמצאה התאמה לאף שורה — בדוק את הכותרות', 'error');
+    return;
+  }
+
+  for (const perf of matched) {
+    await HatziDB.savePerformance(perf);
+  }
+
+  closeModals();
+  let msg = `${matched.length} סרטונים נוספו`;
+  if (unmatched.length > 0) msg += ` (${unmatched.length} כותרות לא נמצאו)`;
+  toast(msg, 'success');
+  await renderPerfBulkView();
+}
+
+// Run analysis + extract top performers + save the bank.
+// This is the feedback loop: top perform → injected as YES BANK in future calls.
+async function runFullAnalysis() {
+  const perfs = await HatziDB.listAllPerformance();
+  if (perfs.length < 3) { toast('צריך לפחות 3 סרטונים עם נתונים', 'error'); return; }
+
+  toast('מנתח דפוסים...');
+  $('perfInsightsSec').style.display = '';
+  $('perfInsightsBody').innerHTML = '<div class="loading">מנתח דפוסים על בסיס ' + perfs.length + ' סרטונים...</div>';
+
+  // Build analytics items + identify top performers (by viral coefficient = (likes+comments+shares)/views)
+  const items = [];
+  const scored = [];
+  for (const p of perfs) {
+    const work = await HatziDB.getWork(p.workId);
+    if (!work) continue;
+    const eng = (p.views > 0) ? ((p.likes||0) + p.comments + p.shares) / p.views : 0;
+    const approvedText = work.lines.filter(l => l.approved).map(l => l.text).join('\n');
+    items.push({
+      title: work.title || '',
+      views: p.views,
+      likes: p.likes || 0,
+      comments: p.comments,
+      shares: p.shares,
+      completion: '',
+      hook: work.selectedHook || '',
+      content: approvedText.substring(0, 500) + ` [חשיפה: ${p.exposureType}, עוקבים+: ${p.newFollowers}]`
+    });
+    scored.push({ workId: p.workId, title: work.title || '', mode: work.mode, views: p.views, eng, content: approvedText });
+  }
+
+  // Run the analysis prompt
+  const prompt = PROMPTS.analytics(items);
+  const result = await callAPI([{ role: 'user', content: prompt }], 3000, 'perfAnalysis');
+  if (!result) { $('perfInsightsBody').innerHTML = '<div style="color:var(--ac)">שגיאה בניתוח</div>'; return; }
+
+  // Build top performers bank — top 3 by engagement, or by views if eng is 0 across the board.
+  const sorted = scored.filter(s => s.views > 0).sort((a, b) => {
+    if (b.eng !== a.eng) return b.eng - a.eng;
+    return b.views - a.views;
+  });
+  const topBank = sorted.slice(0, 3).map(s => ({
+    workId: s.workId,
+    title: s.title,
+    mode: s.mode,
+    views: s.views,
+    engRate: Math.round(s.eng * 1000) / 10,
+    snippet: s.content.substring(0, 300)
+  }));
+
+  // Save bank + insights to settings for reuse
+  await HatziDB.setSetting('topPerformersBank', topBank);
+  await HatziDB.setSetting('lastInsights', { generatedAt: Date.now(), text: result, basedOn: perfs.length });
+
+  // Render
+  const html = result
+    .replace(/^## (.+)$/gm, '<h3 style="margin-top:16px;font-size:14px;color:var(--ac)">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+  $('perfInsightsBody').innerHTML = html;
+  renderTopBank(topBank);
+  toast(`ניתוח הושלם. ${topBank.length} סרטונים מובילים נוספו ל-bank`, 'success');
+}
+
+function renderTopBank(bank) {
+  const el = $('perfTopBank');
+  if (!el) return;
+  if (!bank || bank.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="margin-top:14px;padding:12px;background:var(--bg2);border-radius:8px;border:1px solid var(--gr)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong style="color:var(--gr)">⭐ סרטונים שיוזרקו ל-prompts הבאים (${bank.length})</strong>
+        <label style="font-size:12px">
+          <input type="checkbox" id="useFeedbackLoop" ${state.useFeedbackLoop ? 'checked' : ''} onchange="toggleFeedbackLoop(this.checked)">
+          הפעל לולאת למידה
+        </label>
+      </div>
+      <div style="font-size:12px;color:var(--tx3);margin-bottom:8px">
+        אלה ה-3 הסרטונים שעבדו הכי טוב. כשתייצר תסריט חדש, הקטעים האלה יוזרקו כ-YES BANK כדי שהמודל ילמד מהמה שכבר עבד.
+      </div>
+      ${bank.map((b, i) => `
+        <div style="padding:8px;border-top:1px solid var(--bg3);font-size:12px">
+          <strong>${i+1}. ${esc(b.title)}</strong> · ${b.views.toLocaleString()} צפיות · ${b.engRate}% engagement<br>
+          <span style="color:var(--tx3)">${esc(b.snippet.substring(0, 150))}...</span>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+async function toggleFeedbackLoop(enabled) {
+  state.useFeedbackLoop = enabled;
+  await HatziDB.setSetting('useFeedbackLoop', enabled);
+  toast(enabled ? 'לולאת למידה מופעלת' : 'לולאת למידה מבוטלת', 'success');
+}
+
+// Render previously saved insights (called when opening the perf view).
+async function renderSavedInsights() {
+  const insights = await HatziDB.getSetting('lastInsights');
+  const bank = await HatziDB.getSetting('topPerformersBank');
+  if (!insights && !bank) {
+    $('perfInsightsSec').style.display = 'none';
+    return;
+  }
+  $('perfInsightsSec').style.display = '';
+  if (insights) {
+    const ageDays = Math.floor((Date.now() - insights.generatedAt) / (1000*60*60*24));
+    const ageStr = ageDays === 0 ? 'היום' : ageDays === 1 ? 'אתמול' : `לפני ${ageDays} ימים`;
+    const html = insights.text
+      .replace(/^## (.+)$/gm, '<h3 style="margin-top:16px;font-size:14px;color:var(--ac)">$1</h3>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+    $('perfInsightsBody').innerHTML = `<div class="desc" style="margin-bottom:8px">${ageStr} · ${insights.basedOn} סרטונים</div>` + html;
+  }
+  if (bank) renderTopBank(bank);
+}
+
+// Get the top-performers bank for prompt injection.
+// Returns a string ready to append to the system prompt, or empty string if disabled/empty.
+async function getFeedbackBlock() {
+  if (!state.useFeedbackLoop) return '';
+  const bank = await HatziDB.getSetting('topPerformersBank');
+  if (!bank || bank.length === 0) return '';
+  
+  const lines = ['═══ סרטונים שעבדו הכי טוב (לקח מהביצועים האמיתיים) ═══'];
+  lines.push('(אלה הסרטונים שלך שקיבלו הכי הרבה engagement. תלמד מהמבנה והדימויים שלהם, אל תעתיק.)');
+  lines.push('');
+  bank.forEach((b, i) => {
+    lines.push(`--- ${i+1}. "${b.title}" (${b.views.toLocaleString()} צפיות, ${b.engRate}% engagement) ---`);
+    lines.push(b.snippet);
+    lines.push('');
+  });
+  return lines.join('\n');
 }
 
 // ═══════════════════════════════════════════════════════════════════

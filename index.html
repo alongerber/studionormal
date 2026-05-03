@@ -36,7 +36,7 @@
       <option value="claude-sonnet-4-6">Sonnet 4.6</option>
     </select>
     <button class="icon-btn" onclick="openAnalytics()" title="ניתוח TikTok">📊</button>
-    <button class="icon-btn" onclick="openPerfList()" title="לוג ביצועים">📈</button>
+    <button class="icon-btn" onclick="openPerfBulkView()" title="ניהול ביצועים">📈</button>
     <button class="icon-btn" onclick="openContext()" title="קבצי קונטקסט">📚</button>
     <button class="icon-btn" onclick="openSettings()" title="הגדרות">⚙</button>
     <div class="hdr-meta">
@@ -349,7 +349,7 @@
           <kbd>J</kbd>/<kbd>K</kbd> שורה הבאה/קודמת<br>
           <kbd>Enter</kbd> אשר שורה · <kbd>Space</kbd> דלג<br>
           <kbd>G</kbd> ייצר חלופות · <kbd>F</kbd> תקן שורה<br>
-          <kbd>1</kbd>-<kbd>5</kbd> בחר חלופה<br>
+          <kbd>1</kbd>-<kbd>8</kbd> בחר חלופה<br>
           <kbd>Ctrl+Z</kbd>/<kbd>Ctrl+Y</kbd> בטל/חזור
         </div>
       </div>
@@ -379,9 +379,16 @@
         <div class="wk-controls">
           <div class="control-label">סוג חלופות</div>
           <div class="variety-row" id="varietyRow">
-            <button class="variety-btn on" data-v="twin">כמעט זהה</button>
-            <button class="variety-btn" data-v="similar">דומה</button>
+            <button class="variety-btn" data-v="twin">כמעט זהה</button>
+            <button class="variety-btn on" data-v="similar">דומה</button>
             <button class="variety-btn" data-v="different">שונה לגמרי</button>
+          </div>
+
+          <div class="control-label">כמות אופציות</div>
+          <div class="count-row" id="countRow" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <input type="range" id="altCountSlider" min="1" max="8" value="5" step="1"
+                   oninput="setAltCount(this.value)" style="flex:1;min-width:120px">
+            <span id="altCountLabel" style="font-weight:600;min-width:42px">5</span>
           </div>
 
           <div class="control-label">סגנון</div>
@@ -390,7 +397,7 @@
           <div class="control-label">הנחיה חופשית</div>
           <input type="text" id="freeText" class="free-text" placeholder="למשל: פחות 'ואני', יותר אבסורד...">
 
-          <button class="gen-btn" onclick="generateAlternatives()">🎲 ייצר 5 חלופות</button>
+          <button class="gen-btn" id="genAltsBtn" onclick="generateAlternatives()">🎲 ייצר 5 חלופות</button>
         </div>
 
         <div class="wk-alts">
@@ -410,6 +417,50 @@
     <h2 style="margin-bottom:12px">ייצוא</h2>
     <div class="export-format" id="exportFormat"></div>
     <div id="exportContent"><div class="desc">אין תסריט.</div></div>
+  </div>
+</div>
+
+<!-- ═══ PERFORMANCE VIEW (v2 — bulk entry + insights) ═══ -->
+<div class="view hidden" id="view-perf">
+  <div class="view-wrap">
+    <div class="works-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <h2 style="margin:0">📈 ביצועים</h2>
+        <div class="desc" style="margin-top:4px">מילוי מהיר. רק 4 מספרים לכל סרטון. Tab לעבור בין שדות.</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn2" onclick="openPasteImportPerf()">📋 הדבק טבלה</button>
+        <button class="btn2" onclick="runFullAnalysis()">🧠 נתח דפוסים</button>
+        <button class="btn2" onclick="switchView('works')">← חזרה</button>
+      </div>
+    </div>
+
+    <!-- Bulk entry section: works without perf data -->
+    <div class="sec" style="padding-top:14px">
+      <h3 style="margin-bottom:10px;font-size:14px">סרטונים שעדיין לא מילאת ביצועים</h3>
+      <div id="perfPendingTable" class="perf-bulk-table">
+        <div class="desc">טוען...</div>
+      </div>
+      <div id="perfBulkSaveBar" style="display:none;margin-top:12px;padding:10px;background:var(--bg2);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+        <span id="perfBulkUnsaved" style="font-size:13px;color:var(--ac)">0 שורות חדשות</span>
+        <button class="btn" onclick="savePerfBulk()">💾 שמור הכל</button>
+      </div>
+    </div>
+
+    <!-- Insights from analysis (when present) -->
+    <div class="sec" id="perfInsightsSec" style="padding-top:14px;display:none">
+      <h3 style="margin-bottom:10px;font-size:14px">תובנות מהניתוח האחרון</h3>
+      <div id="perfInsightsBody" class="perf-insights"></div>
+      <div id="perfTopBank" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Already logged -->
+    <div class="sec" style="padding-top:14px">
+      <h3 style="margin-bottom:10px;font-size:14px">כבר נרשמו</h3>
+      <div id="perfLoggedTable" class="perf-logged-table">
+        <div class="desc">אין רשומות עדיין</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -571,6 +622,26 @@
   </div>
 </div>
 
+<!-- Paste-import for bulk perf entry -->
+<div class="modal" id="perfPasteModal">
+  <div class="modal-header">
+    <h3>📋 הדבק טבלת ביצועים</h3>
+    <button class="modal-close" onclick="closeModals()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="desc" style="margin-bottom:10px">
+      הדבק שורות מ-Excel/Sheets/TikTok analytics. כל שורה = סרטון אחד.<br>
+      <strong>פורמט:</strong> כותרת [Tab] צפיות [Tab] לייקים [Tab] תגובות [Tab] שיתופים<br>
+      התאמה לפי כותרת קיימת. אם הכותרת לא נמצאה — תועלם.
+    </div>
+    <textarea id="perfPasteText" class="ta" rows="10" placeholder="ילד לא מקפיץ סוף שבוע&#9;15234&#9;892&#9;47&#9;112&#10;פגישת הורים בלי אבא&#9;8740&#9;451&#9;23&#9;65"></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="btn2" onclick="closeModals()">ביטול</button>
+      <button class="btn" onclick="confirmPasteImportPerf()">📥 ייבא</button>
+    </div>
+  </div>
+</div>
+
 <!-- Performance entry modal -->
 <div class="modal" id="perfModal">
   <div class="modal-header">
@@ -594,11 +665,15 @@
     </div>
     <div class="row">
       <div><div class="lbl">צפיות</div><input type="number" id="perfViews" class="inp" placeholder="0"></div>
-      <div><div class="lbl">תגובות</div><input type="number" id="perfComments" class="inp" placeholder="0"></div>
+      <div><div class="lbl">לייקים</div><input type="number" id="perfLikes" class="inp" placeholder="0"></div>
     </div>
     <div class="row">
+      <div><div class="lbl">תגובות</div><input type="number" id="perfComments" class="inp" placeholder="0"></div>
       <div><div class="lbl">שיתופים</div><input type="number" id="perfShares" class="inp" placeholder="0"></div>
+    </div>
+    <div class="row">
       <div><div class="lbl">עוקבים חדשים</div><input type="number" id="perfNewFollowers" class="inp" placeholder="0"></div>
+      <div></div>
     </div>
     <div class="fld">
       <div class="lbl">הערות</div>

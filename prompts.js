@@ -275,7 +275,8 @@ ${brief.character ? 'דמויות: ' + brief.character + '\n' : ''}${brief.emoti
 תסריט מלא בפורמט המובנה. 2-4 מסכי צ'אט. הסלמת אמת. וי אפור בסוף. סיום שמהדהד את הפתיחה.`
   },
 
-  alternatives: (ctx, variety, styleTags, freeText, mode, fullScript) => {
+  alternatives: (ctx, variety, styleTags, freeText, mode, fullScript, targetIdx, count) => {
+    const numOptions = (count && count >= 1 && count <= 8) ? count : 5;
     let varInstr = '';
     if (variety === 'twin') {
       varInstr = 'החלופות חייבות להיות כמעט זהות — אותו מסר, אותו מבנה, אותן מילות מפתח. רק שינויי ניסוח קלים.';
@@ -284,6 +285,10 @@ ${brief.character ? 'דמויות: ' + brief.character + '\n' : ''}${brief.emoti
     } else {
       varInstr = 'החלופות שונות לגמרי. זווית אחרת, דימוי אחר. חופש יצירתי מלא, אבל חייבות להשתלב בהקשר.';
     }
+    // Each alternative must come from a different angle/image — avoid 5 paraphrases of the same idea
+    const diversityInstr = numOptions >= 3
+      ? '\nכל חלופה חייבת להציע גישה שונה מהאחרות. אסור לחזור על אותו דימוי מרכזי או אותה מבנה תחבירי.'
+      : '';
 
     const modeNote = mode === 'post' 
       ? 'זו יחידה בתוך פוסט פייסבוק. שמור על הקצב של הפסקאות מסביב.'
@@ -291,12 +296,26 @@ ${brief.character ? 'דמויות: ' + brief.character + '\n' : ''}${brief.emoti
       ? 'זו שורה בתוך תסריט ואטסאפ. שמור על הפורמט המדויק (בן/בן מקליד ומוחק/בן שולח/דמות).'
       : 'זו שורה בתסריט סרטון. ברמת YES BANK.';
 
+    // Mark target line in fullScript so the model knows which one to replace.
+    // Previously the model got the same line in two places (ctx and fullScript) without explicit marker.
+    let markedScript = fullScript;
+    if (fullScript && targetIdx != null && typeof targetIdx === 'number') {
+      const lines = fullScript.split('\n');
+      const targetLineNum = targetIdx + 1; // 1-based in fullScript
+      const lineRegex = new RegExp(`^${targetLineNum}\\.\\s`);
+      const matchedIdx = lines.findIndex(l => lineRegex.test(l));
+      if (matchedIdx >= 0) {
+        lines[matchedIdx] = lines[matchedIdx] + '   ← ★ זו השורה להחליף ★';
+        markedScript = lines.join('\n');
+      }
+    }
+
     return `${ctx}
-${fullScript ? '\n═══ ההקשר המלא ═══\n' + fullScript + '\n═══ סוף ═══\n' : ''}
+${markedScript ? '\n═══ ההקשר המלא ═══\n' + markedScript + '\n═══ סוף ═══\n' : ''}
 ${modeNote}
-${varInstr}
+${varInstr}${diversityInstr}
 ${styleTags ? 'סגנון: ' + styleTags + '\n' : ''}${freeText ? 'הנחיה מיוחדת: ' + freeText + '\n' : ''}
-תן 5 חלופות ליחידה הנוכחית בלבד. ברמת Big Short. ממוספרות 1-5. בלי הסברים.`;
+תן ${numOptions} חלופות ליחידה הנוכחית בלבד. ברמת Big Short. ממוספרות 1-${numOptions}. בלי הסברים.`;
   },
 
   fixLine: (ctx, line, mode, fullScript) => {
@@ -306,8 +325,10 @@ ${styleTags ? 'סגנון: ' + styleTags + '\n' : ''}${freeText ? 'הנחיה מ
       ? 'שורה בתסריט ואטסאפ.'
       : 'שורה בתסריט סרטון.';
 
+    // fullScript intentionally NOT included here. ctx already provides surrounding lines —
+    // adding the entire script duplicates information and makes the model focus on
+    // global structure when we just want a tight local fix. Cheaper and sharper without it.
     return `${ctx}
-${fullScript ? '\n═══ ההקשר המלא ═══\n' + fullScript + '\n═══ סוף ═══\n' : ''}
 ${modeNote}
 השורה הנוכחית: "${line}"
 
@@ -451,9 +472,14 @@ function buildContextBlock(contextFiles, brief = null) {
  * Heavy tasks (draft, angles) need full context.
  * Light tasks (alternatives, fix) need it too but can compress.
  * Score/callbacks don't need context.
+ *
+ * NOTE: keys here MUST match the taskType values passed to callAPI exactly.
+ * Previously had 'canon_check' (snake_case) which silently failed because the caller
+ * passed 'canonCheck' (camelCase). Now using camelCase to match all call sites.
+ * Also: 'crossMode' added — converting between mediums must respect canon facts.
  */
 function shouldIncludeContext(taskType) {
-  return ['angles', 'hooks', 'draft', 'alternatives', 'fix', 'canon_check', 'reply'].includes(taskType);
+  return ['angles', 'hooks', 'draft', 'alternatives', 'fix', 'canonCheck', 'reply', 'crossMode'].includes(taskType);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -519,10 +545,10 @@ ${styleTags ? 'סגנון נוסף: ' + styleTags + '\n' : ''}
 // CANON LINTER
 // ═══════════════════════════════════════════════════════════════════
 PROMPTS.canonCheck = (postText, contextFiles) => {
-  const contextBlock = buildContextBlock(contextFiles);
-  return `${contextBlock}
-
-═══ הטקסט לבדיקה ═══
+  // Note: contextFiles param kept for backward compat but no longer used here.
+  // Context is now injected via system prompt by callAPI when shouldIncludeContext('canonCheck') is true.
+  // This avoids the previous bug where canon was sent twice (once here, once in system prompt).
+  return `═══ הטקסט לבדיקה ═══
 """
 ${postText}
 """

@@ -703,3 +703,27 @@ body.mode-breakout .btn:hover{background:#ff6d90}
 .idea-row .idea-actions button:hover{border-color:var(--br);color:var(--br)}
 .idea-row .idea-actions .save-btn:hover{border-color:var(--gr);color:var(--gr)}
 .idea-row.saved .idea-actions .save-btn{border-color:var(--gr);color:var(--gr);cursor:default}
+
+/* ─── Performance v2 — bulk entry table ─── */
+.perf-bulk-table { display:flex; flex-direction:column; gap:4px; max-height:400px; overflow-y:auto; padding:4px; background:var(--s2); border-radius:8px }
+.pb-row { display:grid; grid-template-columns: 1.8fr 0.4fr 1fr 0.7fr 0.7fr 0.7fr 0.7fr 0.7fr 0.5fr; gap:8px; align-items:center; padding:6px 8px; background:var(--bg2); border-radius:6px; font-size:12px }
+.pb-row.pb-header { background:transparent; color:var(--tx3); font-weight:600; padding:4px 8px; position:sticky; top:0; z-index:1; background:var(--s2) }
+.pb-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.pb-mode { text-align:center; font-size:14px }
+.pb-inp { width:100%; padding:4px 6px; border:1px solid var(--bg3); border-radius:4px; background:var(--bg1); color:var(--tx1); font-family:inherit; font-size:12px; box-sizing:border-box }
+.pb-inp:focus { border-color:var(--ac); outline:none }
+.pb-inp[type="date"] { padding:3px 4px }
+.pb-action { text-align:center }
+
+/* Logged perf table */
+.perf-logged-table { display:flex; flex-direction:column; gap:4px; max-height:300px; overflow-y:auto }
+.pl-row { display:grid; grid-template-columns: 50px 2fr repeat(5, 1fr) 30px; gap:8px; align-items:center; padding:6px 8px; background:var(--bg2); border-radius:6px; font-size:12px }
+.pl-date { color:var(--tx3) }
+.pl-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.pl-stat { text-align:center; color:var(--tx2); font-size:11px }
+.pl-stat strong { color:var(--tx1); font-size:13px }
+
+/* Insights body */
+.perf-insights { padding:14px; background:var(--bg2); border-radius:8px; font-size:13px; line-height:1.7 }
+.perf-insights h3 { font-size:14px; margin-top:14px; color:var(--ac) }
+.perf-insights h3:first-child { margin-top:0 }
